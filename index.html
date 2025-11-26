@@ -1,50 +1,39 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8" />
+<meta charset="UTF-8">
 <title>Atendimento Remoto</title>
+<link rel="icon" href="data:,">
 <style>
-body{font-family:Arial;padding:12px;max-width:900px;margin:auto}
-h2,h3{margin-bottom:6px;}
-#loginPage, #phonePage{display:none;}
-input, select, button{padding:6px;font-size:14px;}
-#topBar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-#videos{display:flex;gap:12px;margin-top:12px;}
-video{background:#000;border-radius:6px;width:320px;height:240px;}
-#controls{margin-top:12px;display:flex;gap:6px;}
-.userSelectWrapper{display:flex;align-items:center;gap:4px;}
+body{font-family:Arial,sans-serif;padding:12px;max-width:900px;margin:auto;}
+#loginPage,#phonePage,#incomingCallModal{display:none;}
+video{background:#000;border-radius:6px;width:320px;height:240px;margin:6px;}
+#topBar{display:flex;justify-content:space-between;align-items:center;}
+#controls{margin-top:12px;}
+button,input,select{padding:6px;font-size:14px;}
+#incomingCallModal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:20px;border:1px solid #ccc;box-shadow:0 0 10px rgba(0,0,0,0.5);}
 </style>
 </head>
 <body>
 
 <div id="loginPage">
   <h2>Bem-vindo</h2>
-  <p>Digite seu nome para entrar:</p>
-  <input id="username" placeholder="Seu nome" />
-  <br><br>
+  <input id="username" placeholder="Seu nome">
   <button id="btnEnter">Entrar</button>
 </div>
 
 <div id="phonePage">
-  <h2>Atendimento Remoto</h2>
   <div id="topBar">
     <div>Logado como: <span id="myName"></span></div>
-    <div class="userSelectWrapper">
-      Usuários online: 
-      <select id="userSelect"><option>Nenhum</option></select>
+    <div>
+      Usuários online: <select id="userSelect"><option>Nenhum</option></select>
       <button id="btnCall">Chamar</button>
     </div>
   </div>
 
-  <div id="videos">
-    <div>
-      <h3>Você</h3>
-      <video id="localVideo" autoplay muted playsinline></video>
-    </div>
-    <div>
-      <h3>Remoto</h3>
-      <video id="remoteVideo" autoplay playsinline></video>
-    </div>
+  <div>
+    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
   </div>
 
   <div id="controls">
@@ -53,12 +42,19 @@ video{background:#000;border-radius:6px;width:320px;height:240px;}
   </div>
 </div>
 
-<script>
-const SIGNALING_URL = "wss://weathered-block-b4aaatendimento.gerentesegurancaarn.workers.dev/";
+<div id="incomingCallModal">
+  <p id="incomingCallText"></p>
+  <button id="acceptCall">Aceitar</button>
+  <button id="rejectCall">Rejeitar</button>
+</div>
 
+<audio id="ringtone" src="https://actions.google.com/sounds/v1/alarms/phone_alerts_ring.ogg" loop></audio>
+
+<script>
+const SIGNALING_URL = "wss://snowy-shadow-3e1fteste.gerentesegurancaarn.workers.dev/";
+ // coloque sua URL do Worker aqui
 let ws=null,myName=null,pc=null,localStream=null,currentTarget=null,micMuted=false;
 
-// Elements
 const loginPage=document.getElementById('loginPage');
 const phonePage=document.getElementById('phonePage');
 const usernameEl=document.getElementById('username');
@@ -70,11 +66,13 @@ const userSelect=document.getElementById('userSelect');
 const btnCall=document.getElementById('btnCall');
 const btnMute=document.getElementById('btnMute');
 const btnHangup=document.getElementById('btnHangup');
+const incomingModal=document.getElementById('incomingCallModal');
+const incomingText=document.getElementById('incomingCallText');
+const acceptBtn=document.getElementById('acceptCall');
+const rejectBtn=document.getElementById('rejectCall');
+const ringtone=document.getElementById('ringtone');
 
-// Show login page initially
-loginPage.style.display='block';
-
-btnEnter.onclick = async ()=>{
+btnEnter.onclick=async()=>{
   const name=usernameEl.value.trim();
   if(!name) return alert('Digite seu nome');
   myName=name;
@@ -82,57 +80,53 @@ btnEnter.onclick = async ()=>{
   loginPage.style.display='none';
   phonePage.style.display='block';
   await startPhone();
-}
+};
 
 async function startPhone(){
   await ensureLocalStream();
   connectWS();
 }
 
-// WebSocket
+async function ensureLocalStream(){
+  if(!localStream){
+    localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+    localVideo.srcObject=localStream;
+  }
+}
+
 function connectWS(){
   ws=new WebSocket(SIGNALING_URL);
-  ws.onopen=()=>{ safeSend({type:'login', name:myName}); }
+  ws.onopen=()=>{ safeSend({type:'login', name:myName}); };
   ws.onmessage=async msg=>{
     const data=JSON.parse(msg.data);
     switch(data.type){
       case 'userlist': renderUsers(data.users); break;
       case 'call_request':
-        if(confirm(`${data.from} está chamando você. Aceitar?`)){
-          safeSend({type:'call_response', target:data.from, from:myName, accept:true});
-        }else{
-          safeSend({type:'call_response', target:data.from, from:myName, accept:false});
-        }
+        ringtone.play();
+        incomingText.innerText=`${data.from} está chamando você.`;
+        incomingModal.style.display='block';
+        currentTarget=data.from;
         break;
       case 'call_response':
-        if(data.accept){ startOffer(data.from); } else alert(`${data.from} rejeitou a chamada`); break;
+        if(data.accept) startOffer(data.from);
+        else alert(`${data.from} rejeitou a chamada`);
+        break;
       case 'offer': await handleOffer(data); break;
       case 'answer': if(pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer)); break;
       case 'ice': if(pc && data.ice) await pc.addIceCandidate(data.ice); break;
     }
-  }
-  ws.onclose=()=>{ console.log('WS fechado'); resetCall(); }
-  ws.onerror=(e)=>{ console.log('WS erro', e); }
+  };
+  ws.onclose=()=>{ resetCall(); };
+  ws.onerror=(e)=>{ console.log('WS erro', e); resetCall(); };
 }
 
 function safeSend(obj){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 
 function renderUsers(users){
   userSelect.innerHTML='';
-  if(!users||users.length===0){ userSelect.innerHTML='<option>Nenhum</option>'; return; }
-  users.forEach(u=>{
-    if(u===myName) return;
-    const opt=document.createElement('option'); opt.value=u; opt.text=u;
-    userSelect.appendChild(opt);
-  });
-}
-
-// WebRTC
-async function ensureLocalStream(){
-  if(!localStream){
-    localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-    localVideo.srcObject=localStream;
-  }
+  const others = users.filter(u=>u!==myName);
+  if(!others.length){ userSelect.innerHTML='<option>Nenhum</option>'; return; }
+  others.forEach(u=>{ const opt=document.createElement('option'); opt.value=u; opt.text=u; userSelect.appendChild(opt); });
 }
 
 async function preparePC(){
@@ -144,13 +138,13 @@ async function preparePC(){
   pc.onconnectionstatechange=()=>{ if(['disconnected','failed','closed'].includes(pc.connectionState)) resetCall(); }
 }
 
-btnCall.onclick=async ()=>{
+btnCall.onclick=()=>{
   const target=userSelect.value;
   if(!target || target==='Nenhum') return alert('Selecione um usuário');
   currentTarget=target;
   safeSend({type:'call_request', target, from:myName});
   alert('Chamando '+target);
-}
+};
 
 async function startOffer(target){
   currentTarget=target;
@@ -169,22 +163,38 @@ async function handleOffer(data){
   safeSend({type:'answer', target:data.from, from:myName, answer});
 }
 
-// Controls
 btnMute.onclick=()=>{
   if(localStream){
     localStream.getAudioTracks().forEach(t=>t.enabled=micMuted);
     micMuted=!micMuted;
     btnMute.innerText=micMuted?'Desmutar Microfone':'Mutar Microfone';
   }
-}
+};
 
-btnHangup.onclick=()=>{ resetCall(); }
+btnHangup.onclick=()=>{ resetCall(); };
 
 function resetCall(){
   if(pc){ try{ pc.close(); }catch(e){} pc=null; }
   remoteVideo.srcObject=null;
   currentTarget=null;
+  ringtone.pause();
+  ringtone.currentTime=0;
+  incomingModal.style.display='none';
 }
+
+acceptBtn.onclick=()=>{
+  ringtone.pause();
+  ringtone.currentTime=0;
+  incomingModal.style.display='none';
+  safeSend({type:'call_response', target:currentTarget, from:myName, accept:true});
+};
+
+rejectBtn.onclick=()=>{
+  ringtone.pause();
+  ringtone.currentTime=0;
+  incomingModal.style.display='none';
+  safeSend({type:'call_response', target:currentTarget, from:myName, accept:false});
+};
 
 window.addEventListener('beforeunload',()=>{ if(myName) safeSend({type:'leave', name:myName}); if(ws) ws.close(); });
 </script>
