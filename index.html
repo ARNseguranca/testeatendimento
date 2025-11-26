@@ -5,24 +5,117 @@
 <title>Atendimento Remoto</title>
 <link rel="icon" href="data:,">
 <style>
-body{font-family:Arial,sans-serif;padding:12px;max-width:900px;margin:auto;}
-#loginPage,#phonePage,#incomingCallModal{display:none;}
-video{background:#000;border-radius:6px;width:320px;height:240px;margin:6px;}
-#topBar{display:flex;justify-content:space-between;align-items:center;}
-#controls{margin-top:12px;}
-button,input,select{padding:6px;font-size:14px;}
-#incomingCallModal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:20px;border:1px solid #ccc;box-shadow:0 0 10px rgba(0,0,0,0.5);}
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background: #f0f2f5;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.container {
+  background: #fff;
+  padding: 20px 30px;
+  border-radius: 10px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+  width: 90%;
+  max-width: 700px;
+}
+
+h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+input, select, button {
+  padding: 10px;
+  margin: 5px 0;
+  font-size: 14px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+}
+
+button {
+  cursor: pointer;
+  background: #007bff;
+  color: white;
+  border: none;
+  transition: background 0.2s;
+}
+
+button:hover {
+  background: #0056b3;
+}
+
+#phonePage {
+  display: none;
+}
+
+#loginPage {
+  display: block;
+}
+
+video {
+  width: 100%;
+  max-width: 320px;
+  height: 240px;
+  background: black;
+  border-radius: 6px;
+  margin: 10px;
+}
+
+#videos {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+}
+
+#topBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+#controls {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#incomingCallModal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  padding: 25px 30px;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+  display: none;
+  z-index: 999;
+  text-align: center;
+}
+
+#incomingCallModal button {
+  margin: 5px;
+}
 </style>
 </head>
 <body>
 
-<div id="loginPage">
-  <h2>Bem-vindo</h2>
-  <input id="username" placeholder="Seu nome">
+<div class="container" id="loginPage">
+  <h2>Bem-vindo ao Atendimento Remoto</h2>
+  <input id="username" placeholder="Digite seu nome">
   <button id="btnEnter">Entrar</button>
 </div>
 
-<div id="phonePage">
+<div class="container" id="phonePage">
   <div id="topBar">
     <div>Logado como: <span id="myName"></span></div>
     <div>
@@ -31,7 +124,7 @@ button,input,select{padding:6px;font-size:14px;}
     </div>
   </div>
 
-  <div>
+  <div id="videos">
     <video id="localVideo" autoplay muted playsinline></video>
     <video id="remoteVideo" autoplay playsinline></video>
   </div>
@@ -51,8 +144,7 @@ button,input,select{padding:6px;font-size:14px;}
 <audio id="ringtone" src="https://actions.google.com/sounds/v1/alarms/phone_alerts_ring.ogg" loop></audio>
 
 <script>
-const SIGNALING_URL = "wss://snowy-shadow-3e1fteste.gerentesegurancaarn.workers.dev/";
- // coloque sua URL do Worker aqui
+const SIGNALING_URL = "wss://snowy-shadow-3e1fteste.gerentesegurancaarn.workers.dev/"; // Seu Worker
 let ws=null,myName=null,pc=null,localStream=null,currentTarget=null,micMuted=false;
 
 const loginPage=document.getElementById('loginPage');
@@ -126,7 +218,12 @@ function renderUsers(users){
   userSelect.innerHTML='';
   const others = users.filter(u=>u!==myName);
   if(!others.length){ userSelect.innerHTML='<option>Nenhum</option>'; return; }
-  others.forEach(u=>{ const opt=document.createElement('option'); opt.value=u; opt.text=u; userSelect.appendChild(opt); });
+  others.forEach(u=>{
+    const opt=document.createElement('option'); 
+    opt.value=u; 
+    opt.text=u; 
+    userSelect.appendChild(opt);
+  });
 }
 
 async function preparePC(){
@@ -134,7 +231,10 @@ async function preparePC(){
   pc=new RTCPeerConnection();
   if(localStream) localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
   pc.ontrack=ev=>{ remoteVideo.srcObject=ev.streams[0]; }
-  pc.onicecandidate=ev=>{ if(ev.candidate && currentTarget) safeSend({type:'ice', target:currentTarget, from:myName, ice:ev.candidate}); }
+  pc.onicecandidate=ev=>{
+    if(ev.candidate && currentTarget) 
+      safeSend({type:'ice', target:currentTarget, from:myName, ice:ev.candidate});
+  };
   pc.onconnectionstatechange=()=>{ if(['disconnected','failed','closed'].includes(pc.connectionState)) resetCall(); }
 }
 
@@ -196,8 +296,10 @@ rejectBtn.onclick=()=>{
   safeSend({type:'call_response', target:currentTarget, from:myName, accept:false});
 };
 
-window.addEventListener('beforeunload',()=>{ if(myName) safeSend({type:'leave', name:myName}); if(ws) ws.close(); });
+window.addEventListener('beforeunload',()=>{ 
+  if(myName) safeSend({type:'leave', name:myName}); 
+  if(ws) ws.close(); 
+});
 </script>
-
 </body>
 </html>
