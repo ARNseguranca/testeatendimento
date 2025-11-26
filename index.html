@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Atendimento Remoto</title>
+<style>
+body{font-family:Arial;padding:12px;max-width:900px;margin:auto}
+h2,h3{margin-bottom:6px;}
+#loginPage, #phonePage{display:none;}
+input, select, button{padding:6px;font-size:14px;}
+#topBar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+#videos{display:flex;gap:12px;margin-top:12px;}
+video{background:#000;border-radius:6px;width:320px;height:240px;}
+#controls{margin-top:12px;display:flex;gap:6px;}
+.userSelectWrapper{display:flex;align-items:center;gap:4px;}
+</style>
+</head>
+<body>
+
+<div id="loginPage">
+  <h2>Bem-vindo</h2>
+  <p>Digite seu nome para entrar:</p>
+  <input id="username" placeholder="Seu nome" />
+  <br><br>
+  <button id="btnEnter">Entrar</button>
+</div>
+
+<div id="phonePage">
+  <h2>Atendimento Remoto</h2>
+  <div id="topBar">
+    <div>Logado como: <span id="myName"></span></div>
+    <div class="userSelectWrapper">
+      Usuários online: 
+      <select id="userSelect"><option>Nenhum</option></select>
+      <button id="btnCall">Chamar</button>
+    </div>
+  </div>
+
+  <div id="videos">
+    <div>
+      <h3>Você</h3>
+      <video id="localVideo" autoplay muted playsinline></video>
+    </div>
+    <div>
+      <h3>Remoto</h3>
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="btnMute">Mutar Microfone</button>
+    <button id="btnHangup">Encerrar Chamada</button>
+  </div>
+</div>
+
+<script>
+const SIGNALING_URL = "wss://weathered-block-b4aaatendimento.gerentesegurancaarn.workers.dev/";
+
+let ws=null,myName=null,pc=null,localStream=null,currentTarget=null,micMuted=false;
+
+// Elements
+const loginPage=document.getElementById('loginPage');
+const phonePage=document.getElementById('phonePage');
+const usernameEl=document.getElementById('username');
+const btnEnter=document.getElementById('btnEnter');
+const myNameEl=document.getElementById('myName');
+const localVideo=document.getElementById('localVideo');
+const remoteVideo=document.getElementById('remoteVideo');
+const userSelect=document.getElementById('userSelect');
+const btnCall=document.getElementById('btnCall');
+const btnMute=document.getElementById('btnMute');
+const btnHangup=document.getElementById('btnHangup');
+
+// Show login page initially
+loginPage.style.display='block';
+
+btnEnter.onclick = async ()=>{
+  const name=usernameEl.value.trim();
+  if(!name) return alert('Digite seu nome');
+  myName=name;
+  myNameEl.innerText=myName;
+  loginPage.style.display='none';
+  phonePage.style.display='block';
+  await startPhone();
+}
+
+async function startPhone(){
+  await ensureLocalStream();
+  connectWS();
+}
+
+// WebSocket
+function connectWS(){
+  ws=new WebSocket(SIGNALING_URL);
+  ws.onopen=()=>{ safeSend({type:'login', name:myName}); }
+  ws.onmessage=async msg=>{
+    const data=JSON.parse(msg.data);
+    switch(data.type){
+      case 'userlist': renderUsers(data.users); break;
+      case 'call_request':
+        if(confirm(`${data.from} está chamando você. Aceitar?`)){
+          safeSend({type:'call_response', target:data.from, from:myName, accept:true});
+        }else{
+          safeSend({type:'call_response', target:data.from, from:myName, accept:false});
+        }
+        break;
+      case 'call_response':
+        if(data.accept){ startOffer(data.from); } else alert(`${data.from} rejeitou a chamada`); break;
+      case 'offer': await handleOffer(data); break;
+      case 'answer': if(pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer)); break;
+      case 'ice': if(pc && data.ice) await pc.addIceCandidate(data.ice); break;
+    }
+  }
+  ws.onclose=()=>{ console.log('WS fechado'); resetCall(); }
+  ws.onerror=(e)=>{ console.log('WS erro', e); }
+}
+
+function safeSend(obj){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+
+function renderUsers(users){
+  userSelect.innerHTML='';
+  if(!users||users.length===0){ userSelect.innerHTML='<option>Nenhum</option>'; return; }
+  users.forEach(u=>{
+    if(u===myName) return;
+    const opt=document.createElement('option'); opt.value=u; opt.text=u;
+    userSelect.appendChild(opt);
+  });
+}
+
+// WebRTC
+async function ensureLocalStream(){
+  if(!localStream){
+    localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+    localVideo.srcObject=localStream;
+  }
+}
+
+async function preparePC(){
+  if(pc) return;
+  pc=new RTCPeerConnection();
+  if(localStream) localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+  pc.ontrack=ev=>{ remoteVideo.srcObject=ev.streams[0]; }
+  pc.onicecandidate=ev=>{ if(ev.candidate && currentTarget) safeSend({type:'ice', target:currentTarget, from:myName, ice:ev.candidate}); }
+  pc.onconnectionstatechange=()=>{ if(['disconnected','failed','closed'].includes(pc.connectionState)) resetCall(); }
+}
+
+btnCall.onclick=async ()=>{
+  const target=userSelect.value;
+  if(!target || target==='Nenhum') return alert('Selecione um usuário');
+  currentTarget=target;
+  safeSend({type:'call_request', target, from:myName});
+  alert('Chamando '+target);
+}
+
+async function startOffer(target){
+  currentTarget=target;
+  await preparePC();
+  const offer=await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  safeSend({type:'offer', target, from:myName, offer});
+}
+
+async function handleOffer(data){
+  currentTarget=data.from;
+  await preparePC();
+  await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+  const answer=await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  safeSend({type:'answer', target:data.from, from:myName, answer});
+}
+
+// Controls
+btnMute.onclick=()=>{
+  if(localStream){
+    localStream.getAudioTracks().forEach(t=>t.enabled=micMuted);
+    micMuted=!micMuted;
+    btnMute.innerText=micMuted?'Desmutar Microfone':'Mutar Microfone';
+  }
+}
+
+btnHangup.onclick=()=>{ resetCall(); }
+
+function resetCall(){
+  if(pc){ try{ pc.close(); }catch(e){} pc=null; }
+  remoteVideo.srcObject=null;
+  currentTarget=null;
+}
+
+window.addEventListener('beforeunload',()=>{ if(myName) safeSend({type:'leave', name:myName}); if(ws) ws.close(); });
+</script>
+
+</body>
+</html>
